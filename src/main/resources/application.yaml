@@ -1,0 +1,70 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: api-gateway
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 5s
+
+      routes:
+        # 1️⃣ Fallback route (MUST exist)
+        - id: fallback-route
+          uri: http://localhost:8081
+          predicates:
+            - Path=/fallback
+
+        # 2️⃣ Main route
+        - id: test-route
+          uri: http://localhost:8080/tasks/last3Completed
+          predicates:
+            - Path=/test/**
+          filters:
+            - RewritePath=/test/(?<segment>.*), /${segment}
+
+            # ✅ Retry FIRST (smooth transient failures)
+            - name: Retry
+              args:
+                retries: 2
+                methods: GET
+                statuses: BAD_GATEWAY, GATEWAY_TIMEOUT
+
+            # ✅ Circuit Breaker AFTER retry
+            - name: CircuitBreaker
+              args:
+                name: backendService
+                fallbackUri: forward:/fallback
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      backendService:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 80
+        waitDurationInOpenState: 15s
+        permittedNumberOfCallsInHalfOpenState: 3
+
+        # ✅ Ignore flaky network issues
+        ignoreExceptions:
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+
+        recordExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers
