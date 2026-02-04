@@ -14,57 +14,103 @@ spring:
     gateway:
       httpclient:
         connect-timeout: 3000
-        response-timeout: 5s
+        response-timeout: 15s
 
       routes:
-        # 1️⃣ Fallback route (MUST exist)
+        # 🔹 Fallback route
         - id: fallback-route
           uri: http://localhost:8081
           predicates:
             - Path=/fallback
 
-        # 2️⃣ Main route
+        # 🔹 Main Gateway Route
         - id: test-route
-          uri: http://localhost:8080/tasks/last3Completed
+          uri: http://httpbin.org
           predicates:
             - Path=/test/**
           filters:
             - RewritePath=/test/(?<segment>.*), /${segment}
 
-            # ✅ Retry FIRST (smooth transient failures)
+            # 🔁 Retry FIRST
             - name: Retry
               args:
                 retries: 2
                 methods: GET
-                statuses: BAD_GATEWAY, GATEWAY_TIMEOUT
+                statuses:
+                  - BAD_GATEWAY
+                  - GATEWAY_TIMEOUT
+                  - INTERNAL_SERVER_ERROR
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: true
 
-            # ✅ Circuit Breaker AFTER retry
+            # 🛑 Circuit Breaker AFTER retry
             - name: CircuitBreaker
               args:
                 name: backendService
-                fallbackUri: forward:/fallback
+                fallbackUri: redirect:/fallback
+                statusCodes:
+                  - 500
+                  - 502
+                  - 503
+                  - 504
 
+# -----------------------------
+# Resilience4j
+# -----------------------------
 resilience4j:
+
+  # 🚫 VERY IMPORTANT — DISABLE TimeLimiter
+  timelimiter:
+    instances:
+      backendService:
+        timeoutDuration: 60s
+        cancelRunningFuture: false
+
+  # ✅ CircuitBreaker = failure tracking ONLY
   circuitbreaker:
     instances:
       backendService:
         slidingWindowType: COUNT_BASED
-        slidingWindowSize: 20
-        minimumNumberOfCalls: 10
-        failureRateThreshold: 80
-        waitDurationInOpenState: 15s
-        permittedNumberOfCallsInHalfOpenState: 3
+        slidingWindowSize: 6
+        minimumNumberOfCalls: 3
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 2
 
-        # ✅ Ignore flaky network issues
-        ignoreExceptions:
-          - org.springframework.web.reactive.function.client.WebClientRequestException
+        slowCallRateThreshold: 100
+        slowCallDurationThreshold: 30s
+
+        ignoreExceptions: []
 
         recordExceptions:
           - java.io.IOException
           - java.util.concurrent.TimeoutException
+          - org.springframework.web.server.ResponseStatusException
+          - org.springframework.cloud.gateway.support.TimeoutException
 
+# -----------------------------
+# Observability
+# -----------------------------
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,circuitbreakers
+        include:
+          - health
+          - info
+          - metrics
+          - circuitbreakers
+          - circuitbreaker-events
+
+# -----------------------------
+# Logging
+# -----------------------------
+logging:
+  level:
+    org.springframework.cloud.gateway.filter.factory.RetryGatewayFilterFactory: TRACE
+    org.springframework.cloud.gateway.filter.NettyRoutingFilter: DEBUG
+    reactor.netty.http.client: DEBUG
+    io.github.resilience4j.circuitbreaker: DEBUG
