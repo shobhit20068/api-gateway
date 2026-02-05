@@ -12,18 +12,31 @@ spring:
 
   cloud:
     gateway:
+      # -----------------------------
+      # Gateway HTTP Client
+      # -----------------------------
       httpclient:
         connect-timeout: 3000
         response-timeout: 15s
 
+      # -----------------------------
+      # 🔥 Gateway Metrics (REQUIRED)
+      # -----------------------------
+      metrics:
+        enabled: true
+
+      # -----------------------------
+      # Routes
+      # -----------------------------
       routes:
+
         # 🔹 Fallback route
         - id: fallback-route
           uri: http://localhost:8081
           predicates:
             - Path=/fallback
 
-        # 🔹 Main Gateway Route
+        # 🔹 Main route
         - id: test-route
           uri: http://httpbin.org
           predicates:
@@ -50,7 +63,7 @@ spring:
             - name: CircuitBreaker
               args:
                 name: backendService
-                fallbackUri: redirect:/fallback
+                fallbackUri: forward:/fallback
                 statusCodes:
                   - 500
                   - 502
@@ -62,14 +75,14 @@ spring:
 # -----------------------------
 resilience4j:
 
-  # 🚫 VERY IMPORTANT — DISABLE TimeLimiter
+  # 🚫 Disable TimeLimiter (important for Gateway)
   timelimiter:
     instances:
       backendService:
         timeoutDuration: 60s
         cancelRunningFuture: false
 
-  # ✅ CircuitBreaker = failure tracking ONLY
+  # ✅ CircuitBreaker config
   circuitbreaker:
     instances:
       backendService:
@@ -83,8 +96,6 @@ resilience4j:
         slowCallRateThreshold: 100
         slowCallDurationThreshold: 30s
 
-        ignoreExceptions: []
-
         recordExceptions:
           - java.io.IOException
           - java.util.concurrent.TimeoutException
@@ -92,21 +103,40 @@ resilience4j:
           - org.springframework.cloud.gateway.support.TimeoutException
 
 # -----------------------------
-# Observability
+# Observability / Actuator
 # -----------------------------
 management:
   endpoints:
     web:
+      # expose all actuator endpoints for testing (switch back to a tighter list for prod)
       exposure:
-        include:
-          - health
-          - info
-          - metrics
-          - circuitbreakers
-          - circuitbreaker-events
+        include: '*'
+
+  endpoint:
+    health:
+      show-details: always
+
+  # enable a simple Micrometer registry so /actuator/metrics returns names & values
+  metrics:
+    export:
+      simple:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        spring.cloud.gateway.requests: true
+      percentiles:
+        spring.cloud.gateway.requests: 0.5,0.9,0.95,0.99
+
+  # keep observations (required for http.client.requests / http.server.requests)
+  observations:
+    http:
+      server:
+        enabled: true
+      client:
+        enabled: true
 
 # -----------------------------
-# Logging
+# Logging (Debug / Learning)
 # -----------------------------
 logging:
   level:
