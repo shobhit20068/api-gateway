@@ -173,3 +173,12 @@ done
 * Rate limit exceeded → 429
 * Backend failure → retries → circuit opens → 503
 * Metrics reflect all state transitions
+
+### 📊 Dashboards as Code
+
+Grafana dashboards are exported as JSON and stored in the repository.
+This enables:
+- Version control
+- Easy environment replication
+- Zero-click dashboard restoration
+
